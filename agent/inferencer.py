@@ -56,7 +56,7 @@ class Inferencer(BaseAgent):
                 module = Dsp(args.dsp_config.feat[feat])
                 self.dsp_modules[feat] = module
         self.model_state, self.step_fn = self.build_model(config.build)
-        self.model_state = self.load_model(self.model_state, args.load)
+        self.model_state = self.load_model(self.model_state, args.load, device=self.device)
 
     def build_model(self, build_config):
         return super().build_model(build_config, mode='inference', device=self.device)

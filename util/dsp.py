@@ -73,7 +73,7 @@ class Dsp():
         return self.vocoder.mel2wav(mel, save=save)
 
     def build_vocoder(self):
-        if torch.cuda.is_available:
+        if torch.cuda.is_available():
             device = 'cuda'
         else:
             device = 'cpu'

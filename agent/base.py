@@ -104,9 +104,9 @@ class BaseAgent():
         save_checkpoint(state, save_path)
 
     @staticmethod
-    def load_model(model_state, load_path):
+    def load_model(model_state, load_path, device=None):
         dynamic_state = model_state['_dynamic_state']
-        state = load_checkpoint(load_path)
+        state = load_checkpoint(load_path, map_location=device)
         for key in dynamic_state:
             if hasattr(model_state[key], 'state_dict'):
                 try:
