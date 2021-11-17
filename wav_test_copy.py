@@ -6,12 +6,15 @@ import torch
 
 from pathlib import Path
 
+import logging
 import util.dsp as dsp
 from agent.base import BaseAgent
 from util.config import Config
 # from util.vocoder import get_vocoder
 
-
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s | %(filename)s | %(message)s',\
+     datefmt='%Y-%m-%d %H:%M:%S')
+logger = logging.getLogger(__name__)
 
 def save_spect(save_path, spec):
     fig, ax = plt.subplots(figsize=(10, 8))
