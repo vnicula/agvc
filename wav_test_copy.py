@@ -8,8 +8,10 @@ from pathlib import Path
 
 import logging
 import util.dsp as dsp
+
 from agent.base import BaseAgent
 from util.config import Config
+from util.mytorch import same_seeds
 # from util.vocoder import get_vocoder
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s | %(filename)s | %(message)s',\
@@ -42,6 +44,7 @@ def main(
 
     # vocoder = get_vocoder(device)
     # print(vocoder)
+    same_seeds(961998)
 
     dsp_config_path = 'preprocess.yml'
     dsp_config = Config(dsp_config_path)
