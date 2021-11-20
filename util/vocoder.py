@@ -10,7 +10,7 @@ class VocoderWrapper():
 
     def mel2wav(self, mel, save=''):
         device = self.device
-        print('mel2wav device: ', device)
+        # print('mel2wav device: ', device)
         with torch.no_grad():
             if type(mel) is torch.Tensor:
                 mel = mel.squeeze()
