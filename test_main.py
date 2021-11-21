@@ -49,7 +49,7 @@ my_config = Config('train_again-c4s.yml')
 model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
 model_state = BaseAgent.load_model(model_state, model_path, device=device)
 
-tgt = my_dsp.load_wav('data/wav48/celebs/jeff_bezos.wav')
+tgt = my_dsp.load_wav('data/wav48/celebs/lady_gaga.wav')
 print('target shape: ', tgt.shape)
 tgt_mel = my_dsp.wav2mel(tgt)
 print('tgt_mel shape:', tgt_mel.shape)
@@ -101,6 +101,7 @@ def main_inp(args=None):
     stream = p.open(format=pyaudio.paFloat32,
                     channels=attr_d['channels'],
                     rate=attr_d["sampling_rate"],
+                    input_device_index=1,
                     input=True,
                     # output=True,
                     frames_per_buffer=attr_d["segment_size"])
@@ -111,7 +112,8 @@ def main_inp(args=None):
     data = stream.read(attr_d["segment_size"])
     for i in range(0, 10):
         data = np.frombuffer(data, dtype=np.float32)
-        data, _ = librosa.effects.trim(data, top_db=my_dsp.config['trim'])
+        print('data range: ', data.min(), data.max())
+        # data, _ = librosa.effects.trim(data, top_db=my_dsp.config['trim'])
         np.clip(data, -1.0, 1.0)
         src_mel = my_dsp.wav2mel(data)
         print(src_mel.shape)
