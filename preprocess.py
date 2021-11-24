@@ -4,7 +4,7 @@ import logging
 
 import numpy as np
 import pyworld as pw
-import resemblyzer
+# import resemblyzer
 from glob import glob
 from tqdm import tqdm
 from functools import partial
