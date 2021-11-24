@@ -6,18 +6,18 @@ flag: c4s
 
 dataset:
     dataset_name: 'vctk'
-    feat_path: data/features
+    feat_path: data/features/vctk
     feat:
         - 'mel'
-    indexes_path: ./data/indexes/default/indexes.pkl
+    indexes_path: ./data/indexes/vctk/indexes.pkl
     seglen: 128
 
 dataloader:
     train:
-        batch_size: 32
+        batch_size: 1024 
         shuffle: True
     dev:
-        batch_size: 64
+        batch_size: 256
 
 build:
     model_name: again
@@ -41,7 +41,7 @@ build:
                     alpha: 0.1
     optimizer:
         params:
-            lr: 0.0005
+            lr: 0.001
             betas:
                 - 0.9
                 - 0.999

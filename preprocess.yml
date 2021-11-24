@@ -2,7 +2,7 @@
 
 _name: 'Preprocess Config (default)'
 
-input_path: './data/wav48'
+input_path: '../ai-research-code/nvcnet/VCTK-Corpus/wav48'
 output_path: './data/features/vctk'
 
 preprocessor_name: vctk
