@@ -4,19 +4,22 @@ import torch.nn.functional as F
 from util.mytorch import np2pt
 
 
-class MyDataParallel(torch.nn.DataParallel):
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            return getattr(self.module, name)
+# class MyDataParallel(torch.nn.DataParallel):
+#     def __getattr__(self, name):
+#         try:
+#             return super().__getattr__(name)
+#         except AttributeError:
+#             return getattr(self.module, name)
 
 
 def build_model(build_config, device, mode):
     model = Model(**build_config.model.params)
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        model = MyDataParallel(model).to(device)
+    # BUG: multi GPU model saved cannot be load on CPU or single GPU
+    # suspect the saving code doeesn't read attributes
+    # if torch.cuda.device_count() > 1:
+    #     print("Let's use", torch.cuda.device_count(), "GPUs!")
+    #     model = MyDataParallel(model)
+    model = model.to(device)
     if mode == 'train':
         # model_state, step_fn, save, load
         optimizer = torch.optim.Adam(model.parameters(), **build_config.optimizer.params)
