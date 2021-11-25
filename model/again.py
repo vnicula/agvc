@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List, Tuple
 from util.mytorch import np2pt
 
 
@@ -137,24 +138,32 @@ class InstanceNorm(nn.Module):
         super().__init__()
         self.eps = eps
 
-    def calc_mean_std(self, x, mask=None):
+    def calc_mean_std(self, x): #, mask=None):
+        # print('x shape: ', x.shape)
         B, C = x.shape[:2]
 
         mn = x.view(B, C, -1).mean(-1)
         sd = (x.view(B, C, -1).var(-1) + self.eps).sqrt()
-        mn = mn.view(B, C, *((len(x.shape) - 2) * [1]))
-        sd = sd.view(B, C, *((len(x.shape) - 2) * [1]))
+
+        # NOTE: jit script cannot infer these shapes, rewrite to default
+        # print('mn, sd shape:', mn.shape, sd.shape)
+        # mn = mn.view(B, C, *((len(x.shape) - 2) * [1]))
+        # sd = sd.view(B, C, *((len(x.shape) - 2) * [1]))
+        mn = mn.view(B, C, 1)
+        sd = sd.view(B, C, 1)
         
         return mn, sd
 
 
-    def forward(self, x, return_mean_std=False):
+    def forward(self, x): #, return_mean_std=False):
         mean, std = self.calc_mean_std(x)
         x = (x - mean) / std
-        if return_mean_std:
-            return x, mean, std
-        else:
-            return x
+        # NOTE: jit script cannot deal with two return types
+        # if return_mean_std:
+        #     return x, mean, std
+        # else:
+        #     return x
+        return x, mean, std
 
 
 class ConvNorm(torch.nn.Module):
@@ -227,7 +236,7 @@ class EncConvBlock(nn.Module):
 
 
 class DecConvBlock(nn.Module):
-    def __init__(self, c_in, c_h, c_out, upsample=1):
+    def __init__(self, c_in, c_h, c_out, upsample=1.0):
         super().__init__()
         self.dec_block = nn.Sequential(
                 ConvNorm(c_in, c_h, kernel_size=3, stride=1),
@@ -241,7 +250,7 @@ class DecConvBlock(nn.Module):
                 nn.LeakyReLU(),
                 ConvNorm(c_h, c_in, kernel_size=3),
                 )
-        self.upsample = upsample
+        self.upsample = float(upsample)
     def forward(self, x):
         y = self.dec_block(x)
         if self.upsample >  1:
@@ -287,7 +296,8 @@ class Encoder(nn.Module):
         
         for block in self.conv1d_blocks:
             y = block(y)
-            y, mn, sd = self.inorm(y, return_mean_std=True)
+            # y, mn, sd = self.inorm(y, return_mean_std=True)
+            y, mn, sd = self.inorm(y)
             mns.append(mn)
             sds.append(sd)
 
@@ -313,19 +323,32 @@ class Decoder(nn.Module):
         self.rnn = nn.GRU(c_h, c_h, 2)
         self.out_layer = nn.Linear(c_h, c_out)
 
-    def forward(self, enc, cond, return_c=False, return_s=False):
-        y1, _, _ = enc
-        y2, mns, sds = cond
+    def forward(self, 
+                enc: Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]], 
+                cond: Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]): #, return_c=False, return_s=False):
+        # NOTE: torch jit script: RuntimeError: Tensor (inferred) cannot be used as a tuple
+        # y1, _, _ = enc
+        y1 = enc[0]
+
+        # NOTE: torch jit script: RuntimeError: Tensor (inferred) cannot be used as a tuple
+        # y2, mns, sds = cond
+        y2 = cond[0]
+        mns = cond[1]
+        sds = cond[2]
+
         mn, sd = self.inorm.calc_mean_std(y2)
-        c = self.inorm(y1)
+        c, _, _ = self.inorm(y1)
         c_affine = c * sd + mn
 
         y = self.in_layer(c_affine)
         y = self.act(y)
 
-        for i, (block, mn, sd) in enumerate(zip(self.conv_blocks, mns, sds)):
+        # for i, (block, mn, sd) in enumerate(zip(self.conv_blocks, mns, sds)):
+        for i, block in enumerate(self.conv_blocks):
+            mn = mns[i]
+            sd = sds[i]
             y = block(y)
-            y = self.inorm(y)
+            y, _, _ = self.inorm(y)
             y = y * sd + mn
 
         y = torch.cat((mn, y), dim=2)
@@ -334,15 +357,19 @@ class Decoder(nn.Module):
         y = y[:,1:,:]
         y = self.out_layer(y)
         y = y.transpose(1,2)
-        if return_c:
-            return y, c
-        elif return_s:
-            mn = torch.cat(mns, -2)
-            sd = torch.cat(sds, -2)
-            s = mn * sd
-            return y, s
-        else:
-            return y
+
+        # NOTE: torch jit script RuntimeError: 
+        # Previous return statement returned a value of type Tuple[Tensor, Tensor] but this return statement returns a value of type Tensor:
+        # if return_c:
+        #     return y, c
+        # elif return_s:
+        #     mn = torch.cat(list(mns), dim=-2)
+        #     sd = torch.cat(list(sds), dim=-2)
+        #     s = mn * sd
+        #     return y, s
+        # else:
+        #     return y
+        return y
 
 class VariantSigmoid(nn.Module):
     def __init__(self, alpha):
@@ -380,6 +407,7 @@ class Model(nn.Module):
         self.decoder = Decoder(**decoder_params)
         self.act = Activation(**activation_params)
 
+    @torch.jit.ignore
     def forward(self, x, x_cond=None):
 
         len_x = x.size(2)
@@ -398,6 +426,7 @@ class Model(nn.Module):
         y = self.decoder(enc, cond)
         return y
 
+    @torch.jit.export
     def inference(self, source, target):
 
         original_source_len = source.size(-1)
