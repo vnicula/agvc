@@ -1,5 +1,7 @@
 import argparse
+import numpy as np
 import torch
+import os
 
 from agent.base import BaseAgent
 from util.config import Config
@@ -13,24 +15,15 @@ def get_args():
     return parser.parse_args()
 
 
-def inference_step(model_state, data):
-    meta = {}
+def inference_step(model_state, source, target):
+
     model = model_state['model']
     device = model_state['device']
     model.to(device)
     model.eval()
-
-    source = data['source']['mel']
-    target = data['target']['mel']
-
-    source = np2pt(source).to(device)
-    target = np2pt(target).to(device)
     
     dec = model.inference(source, target)
-    meta = {
-        'dec': dec
-    }
-    return meta
+    return dec
 
 if __name__ == '__main__':
 
@@ -41,12 +34,18 @@ if __name__ == '__main__':
 
     # build model
     model_path = args.pth
+    model_name = os.path.splitext(model_path)[0]
     my_config = Config(args.config)
     model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
     model_state = BaseAgent.load_model(model_state, model_path, device=device)
 
-    model = model_state['model'].eval()
     example_inference_input = torch.rand(1, 80, 128)
+    # Compute inference out for non-scripted model
+    with torch.no_grad():
+        dec = inference_step(model_state, example_inference_input, example_inference_input)
+    dec = dec.detach().cpu().numpy()    
+
+    model = model_state['model'].eval()
     
     # NOTE: tracing is risky as there are if's and device pinning
     # inputs = {'inference': (example_inference_input, example_inference_input)}
@@ -54,8 +53,31 @@ if __name__ == '__main__':
 
     # script it!
     scripted_module = torch.jit.script(model)
+    inference_out = scripted_module.inference(example_inference_input, example_inference_input)
+    print(np.allclose(inference_out.detach().cpu().numpy(), dec, rtol=1e-05, atol=1e-08, equal_nan=False))
 
-    print(scripted_module(example_inference_input))
+    scripted_module.save(model_name + '.pt')
+    loaded_model = torch.jit.load(model_name + '.pt')
+    loaded_model.to(device)
+    loaded_inference_out = loaded_model.inference(example_inference_input, example_inference_input).detach().cpu().numpy()
+    print(np.allclose(dec, loaded_inference_out, rtol=1e-05, atol=1e-08, equal_nan=False))
+
+    # Script vocoder
+    vocoder = torch.hub.load('descriptinc/melgan-neurips', 'load_melgan')
+    voco_net = vocoder.mel2wav.eval()
+    trace_vocoder = torch.jit.trace(voco_net, inference_out.detach())
+    vocoder_out = trace_vocoder(inference_out.detach()).detach().cpu().numpy().flatten()
+    print(vocoder_out)
+
+    with torch.no_grad():
+        y = vocoder.inverse(inference_out).detach().cpu().numpy().flatten()
+    print(np.allclose(vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
+    trace_vocoder.save('melgan-neurips.pt')
+    loaded_vocoder = torch.jit.load('melgan-neurips.pt')
+    loaded_vocoder.to(device)
+    loaded_vocoder_out = loaded_vocoder(inference_out.detach()).detach().cpu().numpy()
+    print(np.allclose(loaded_vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
+
 
     
     

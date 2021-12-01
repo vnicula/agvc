@@ -407,7 +407,7 @@ class Model(nn.Module):
         self.decoder = Decoder(**decoder_params)
         self.act = Activation(**activation_params)
 
-    @torch.jit.ignore
+    @torch.jit.unused
     def forward(self, x, x_cond=None):
 
         len_x = x.size(2)
