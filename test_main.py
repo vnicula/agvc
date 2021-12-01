@@ -106,28 +106,35 @@ def main_inp(args=None):
                     # output=True,
                     frames_per_buffer=attr_d["segment_size"])
 
-    print("Starting to listen.")
-
     out = np.empty((0,), dtype=np.float32)
+
+    print("Starting to listen.")
     data = stream.read(attr_d["segment_size"])
     for i in range(0, 10):
         data = np.frombuffer(data, dtype=np.float32)
-        print('data range: ', data.min(), data.max())
-        # data, _ = librosa.effects.trim(data, top_db=my_dsp.config['trim'])
+        print('data range: %.3f, %.3f' % (data.min(), data.max()))
+        data, index_vad = librosa.effects.trim(data, top_db=my_dsp.config['trim'])
         np.clip(data, -1.0, 1.0)
+        lead_silence = np.zeros(index_vad[0], dtype=np.float32)
+        trail_silence = np.zeros(attr_d["segment_size"] - index_vad[1], dtype=np.float32)
+        print(index_vad)
         src_mel = my_dsp.wav2mel(data)
         print(src_mel.shape)
 
         with torch.no_grad():
-            data = {
+            data_dict = {
                 'source': {'mel': src_mel},
                 'target': {'mel': tgt_mel},
             }
-            meta = step_fn(model_state, data)
-            dec = meta['dec']
-            y_out = my_dsp.mel2wav(dec)
+            # meta = step_fn(model_state, data_dict)
+            # dec = meta['dec']
+            # y_out = my_dsp.mel2wav(dec)
+            y_out = my_dsp.mel2wav(src_mel)
         
-        out = np.append(out, y_out[:attr_d["segment_size"]], axis=0)
+        print('len out: ', len(y_out))
+        reco = np.concatenate([lead_silence, y_out[:len(data)], trail_silence], axis=0)
+        print('reco length: ', len(reco))
+        out = np.append(out, reco[:attr_d["segment_size"]], axis=0)
         print(out.shape)
         # stream.write(y_out.tobytes(), attr_d["segment_size"])
         

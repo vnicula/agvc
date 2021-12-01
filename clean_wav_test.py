@@ -14,10 +14,11 @@ FMAX  = 11025
 NFFT = 1024
 HOP_LENGTH = 256
 WIN_LENGTH = 1024
+TRIM = 20
 
 def load_wav(path):
     y, sr = librosa.load(path, sr=SR)
-    y, _ = librosa.effects.trim(y, top_db=20)
+    y, _ = librosa.effects.trim(y, top_db=TRIM)
     y = np.clip(y, -1.0, 1.0)
     return y
 
