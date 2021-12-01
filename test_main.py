@@ -138,7 +138,8 @@ def main_inp(args=None):
         print(out.shape)
         # stream.write(y_out.tobytes(), attr_d["segment_size"])
         
-        data = stream.read(attr_d["segment_size"])
+        # NOTE: need exception_on_overflow = True
+        data = stream.read(attr_d["segment_size"], exception_on_overflow = False)
     
     sf.write(file='10secs.wav', data=out, samplerate=attr_d["sampling_rate"])
     stream.stop_stream()
