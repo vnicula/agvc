@@ -44,7 +44,8 @@ dsp_config = Config(dsp_config_path)
 my_dsp = dsp.Dsp(dsp_config.feat['mel'])
 print(my_dsp.config)
 
-model_path = 'again-c4s_100000.pth'
+# model_path = 'again-c4s_100000.pth'
+model_path = 'steps_100000.pth'
 my_config = Config('train_again-c4s.yml')
 model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
 model_state = BaseAgent.load_model(model_state, model_path, device=device)

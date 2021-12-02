@@ -11,6 +11,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--pth')
     parser.add_argument('--config')
+    parser.add_argument('--vocoder', default=False)
 
     return parser.parse_args()
 
@@ -24,6 +25,35 @@ def inference_step(model_state, source, target):
     
     dec = model.inference(source, target)
     return dec
+
+
+class VCWrapper(torch.nn.Module):
+    def __init__(self, model_state):
+        super().__init__()
+        self.model = model_state['model']
+        self.device = model_state['device']
+        self.model.to(device)
+        self.model.eval()
+
+    def forward(self, x, y):
+        with torch.no_grad():
+            dec = self.model.inference(x, y)
+        return dec
+
+
+class VocoWrapper(torch.nn.Module):
+    def __init__(self, vocoder, device):
+        super().__init__()
+        self.device = device
+        self.model = vocoder.mel2wav
+        self.model.to(device)
+        self.model.eval()
+
+    def forward(self, x):
+        with torch.no_grad():
+            dec = self.model(x).view(-1)
+        return dec
+
 
 if __name__ == '__main__':
 
@@ -40,12 +70,11 @@ if __name__ == '__main__':
     model_state = BaseAgent.load_model(model_state, model_path, device=device)
 
     example_inference_input = torch.rand(1, 80, 128)
-    # Compute inference out for non-scripted model
-    with torch.no_grad():
-        dec = inference_step(model_state, example_inference_input, example_inference_input)
-    dec = dec.detach().cpu().numpy()    
+    model = VCWrapper(model_state)
 
-    model = model_state['model'].eval()
+    # Compute inference out for non-scripted model
+    dec = model(example_inference_input, example_inference_input)
+    dec = dec.detach().cpu().numpy()    
     
     # NOTE: tracing is risky as there are if's and device pinning
     # inputs = {'inference': (example_inference_input, example_inference_input)}
@@ -53,30 +82,32 @@ if __name__ == '__main__':
 
     # script it!
     scripted_module = torch.jit.script(model)
-    inference_out = scripted_module.inference(example_inference_input, example_inference_input)
+    inference_out = scripted_module(example_inference_input, example_inference_input)
     print(np.allclose(inference_out.detach().cpu().numpy(), dec, rtol=1e-05, atol=1e-08, equal_nan=False))
 
-    scripted_module.save(model_name + '.pt')
-    loaded_model = torch.jit.load(model_name + '.pt')
+    scripted_module.save(model_name + '_' + device + '.pt')
+    loaded_model = torch.jit.load(model_name + '_' + device + '.pt')
     loaded_model.to(device)
-    loaded_inference_out = loaded_model.inference(example_inference_input, example_inference_input).detach().cpu().numpy()
+    loaded_inference_out = loaded_model(example_inference_input, example_inference_input).detach().cpu().numpy()
     print(np.allclose(dec, loaded_inference_out, rtol=1e-05, atol=1e-08, equal_nan=False))
 
-    # Script vocoder
-    vocoder = torch.hub.load('descriptinc/melgan-neurips', 'load_melgan')
-    voco_net = vocoder.mel2wav.eval()
-    trace_vocoder = torch.jit.trace(voco_net, inference_out.detach())
-    vocoder_out = trace_vocoder(inference_out.detach()).detach().cpu().numpy().flatten()
-    print(vocoder_out)
+    if args.vocoder:
+        # Script vocoder
+        melgan = torch.hub.load('descriptinc/melgan-neurips', 'load_melgan')
+        vocoder = VocoWrapper(melgan, device)
+        trace_vocoder = torch.jit.trace(vocoder, inference_out.detach())
+        vocoder_out = trace_vocoder(inference_out).detach().cpu().numpy()
+        print(vocoder_out)
 
-    with torch.no_grad():
-        y = vocoder.inverse(inference_out).detach().cpu().numpy().flatten()
-    print(np.allclose(vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
-    trace_vocoder.save('melgan-neurips.pt')
-    loaded_vocoder = torch.jit.load('melgan-neurips.pt')
-    loaded_vocoder.to(device)
-    loaded_vocoder_out = loaded_vocoder(inference_out.detach()).detach().cpu().numpy()
-    print(np.allclose(loaded_vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
+        with torch.no_grad():
+            y = melgan.inverse(inference_out).detach().cpu().numpy().flatten()
+
+        print(np.allclose(vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
+        trace_vocoder.save('melgan-neurips_' + device + '.pt')
+        loaded_vocoder = torch.jit.load('melgan-neurips_' + device + '.pt')
+        loaded_vocoder.to(device)
+        loaded_vocoder_out = loaded_vocoder(inference_out.detach()).detach().cpu().numpy()
+        print(np.allclose(loaded_vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
 
 
     
