@@ -28,10 +28,11 @@ def inference_step(model_state, source, target):
 
 def _remove_weight_norm(m):
     try:
-        print(f"Weight norm is removed from {m}.")
+        # print(f"Weight norm is removed from {m}.")
         torch.nn.utils.remove_weight_norm(m)
     except ValueError:
-        print( "this module didn't have weight norm: ", m)
+        # print( "this module didn't have weight norm: ", m)
+        return
 
 
 class VCWrapper(torch.nn.Module):
@@ -75,12 +76,13 @@ if __name__ == '__main__':
 
     # build model
     model_path = args.pth
+    model_dir = os.path.dirname(model_path)
     model_name = os.path.splitext(model_path)[0]
     my_config = Config(args.config)
     model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
     model_state = BaseAgent.load_model(model_state, model_path, device=device)
 
-    example_inference_input = torch.rand(1, 80, 128)
+    example_inference_input = torch.rand(1, 80, 128).to(device)
     model = VCWrapper(model_state)
 
     # Compute inference out for non-scripted model
@@ -114,8 +116,9 @@ if __name__ == '__main__':
             y = melgan.inverse(inference_out).detach().cpu().numpy().flatten()
 
         print(np.allclose(vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
-        trace_vocoder.save('melgan-neurips_' + device + '.pt')
-        loaded_vocoder = torch.jit.load('melgan-neurips_' + device + '.pt')
+        melgan_pt_file = os.path.join(model_dir, 'melgan-neurips_' + device + '.pt')
+        trace_vocoder.save(melgan_pt_file)
+        loaded_vocoder = torch.jit.load(melgan_pt_file)
         loaded_vocoder.to(device)
         loaded_vocoder_out = loaded_vocoder(inference_out.detach()).detach().cpu().numpy()
         print(np.allclose(loaded_vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
