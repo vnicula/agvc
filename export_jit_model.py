@@ -26,14 +26,23 @@ def inference_step(model_state, source, target):
     dec = model.inference(source, target)
     return dec
 
+def _remove_weight_norm(m):
+    try:
+        print(f"Weight norm is removed from {m}.")
+        torch.nn.utils.remove_weight_norm(m)
+    except ValueError:
+        print( "this module didn't have weight norm: ", m)
+
 
 class VCWrapper(torch.nn.Module):
     def __init__(self, model_state):
         super().__init__()
         self.model = model_state['model']
         self.device = model_state['device']
-        self.model.to(device)
+        self.model.apply(_remove_weight_norm)
         self.model.eval()
+        self.model.to(device)
+
 
     def forward(self, x, y):
         with torch.no_grad():
@@ -46,8 +55,10 @@ class VocoWrapper(torch.nn.Module):
         super().__init__()
         self.device = device
         self.model = vocoder.mel2wav
-        self.model.to(device)
+        self.model.apply(_remove_weight_norm)
         self.model.eval()
+        self.model.to(device)
+
 
     def forward(self, x):
         with torch.no_grad():
@@ -78,7 +89,7 @@ if __name__ == '__main__':
     
     # NOTE: tracing is risky as there are if's and device pinning
     # inputs = {'inference': (example_inference_input, example_inference_input)}
-    # module = torch.jit.trace_module(model, inputs)
+    # module = torch.jit.trace(model, (example_inference_input, example_inference_input))
 
     # script it!
     scripted_module = torch.jit.script(model)
@@ -109,6 +120,4 @@ if __name__ == '__main__':
         loaded_vocoder_out = loaded_vocoder(inference_out.detach()).detach().cpu().numpy()
         print(np.allclose(loaded_vocoder_out, y, rtol=1e-05, atol=1e-08, equal_nan=False))
 
-
-    
     
