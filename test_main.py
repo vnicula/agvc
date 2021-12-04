@@ -117,6 +117,7 @@ def main_inp(args=None):
     for i in range(0, 10):
         raw_data = np.frombuffer(data, dtype=np.float32)
         print('data range: %.3f, %.3f' % (raw_data.min(), raw_data.max()))
+        # TODO: tune all these plus segment_size
         vad_data, index_vad = librosa.effects.trim(raw_data, top_db=my_dsp.config['trim'], ref=0.5, frame_length=512, hop_length=128)
         lead_silence = raw_data[:index_vad[0]]
         trail_silence = raw_data[index_vad[1]:]
