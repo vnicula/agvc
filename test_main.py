@@ -27,7 +27,7 @@ from util.mytorch import same_seeds
 
 attr_d = {
     "channels": 1,
-    "segment_size": 8192,
+    "segment_size": 8191,
     "sampling_rate": 22050,
 }
 
@@ -41,7 +41,7 @@ for i in range(p.get_device_count()):
 
 dsp_config_path = 'preprocess.yml'
 dsp_config = Config(dsp_config_path)
-dsp_config.feat['mel']['trim'] = 120
+dsp_config.feat['mel']['trim'] = 30
 my_dsp = dsp.Dsp(dsp_config.feat['mel'])
 print(my_dsp.config)
 
@@ -74,7 +74,7 @@ def callback(in_data, frame_count, time_info, status):
         y_out = my_dsp.mel2wav(dec)
     
     print(y_out.shape)
-    # return (y_out[:attr_d["segment_size"]], pyaudio.paContinue)
+
     return (y_out[:attr_d["segment_size"]], pyaudio.paContinue)
 
 
@@ -117,35 +117,36 @@ def main_inp(args=None):
     for i in range(0, 10):
         raw_data = np.frombuffer(data, dtype=np.float32)
         print('data range: %.3f, %.3f' % (raw_data.min(), raw_data.max()))
-        vad_data, index_vad = librosa.effects.trim(raw_data, top_db=my_dsp.config['trim'], frame_length=256, hop_length=64)
-        np.clip(vad_data, -1.0, 1.0)
+        vad_data, index_vad = librosa.effects.trim(raw_data, top_db=my_dsp.config['trim'], ref=0.5, frame_length=512, hop_length=128)
         lead_silence = raw_data[:index_vad[0]]
         trail_silence = raw_data[index_vad[1]:]
         print(index_vad)
+        y_out = vad_data
         # data = np.zeros_like(vad_data)
-        src_mel = my_dsp.wav2mel(vad_data)
-        print(src_mel.shape)
+        if index_vad[1] - index_vad[0] >= 2048:
+            # np.clip(vad_data, -1.0, 1.0)
+            src_mel = my_dsp.wav2mel(vad_data)
+            print(src_mel.shape)
 
-        with torch.no_grad():
-            data_dict = {
-                'source': {'mel': src_mel},
-                'target': {'mel': tgt_mel},
-            }
-            meta = step_fn(model_state, data_dict)
-            dec = meta['dec']
-            y_out = my_dsp.mel2wav(dec)
-            # y_out = my_dsp.mel2wav(src_mel)
-            # y_out = vad_data
+            with torch.no_grad():
+                data_dict = {
+                    'source': {'mel': src_mel},
+                    'target': {'mel': tgt_mel},
+                }
+                meta = step_fn(model_state, data_dict)
+                dec = meta['dec']
+                y_out = my_dsp.mel2wav(dec)
+                # y_out = my_dsp.mel2wav(src_mel)
         
-        print('len out: ', len(y_out))
+        print('shape out: ', y_out.shape)
         reco = np.concatenate([lead_silence, y_out[:len(vad_data)], trail_silence], axis=0)
-        print('reco length: ', len(reco))
+        print('reco shape: ', reco.shape)
         out = np.append(out, reco[:attr_d["segment_size"]], axis=0)
         print(out.shape)
         # stream.write(y_out.tobytes(), attr_d["segment_size"])
         
         # NOTE: need exception_on_overflow = True
-        data = stream.read(attr_d["segment_size"], exception_on_overflow = True)
+        data = stream.read(attr_d["segment_size"], exception_on_overflow=True)
     
     sf.write(file='10secs.wav', data=out, samplerate=attr_d["sampling_rate"])
     stream.stop_stream()
