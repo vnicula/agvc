@@ -79,7 +79,7 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
     spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
 
     spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
-    spec = spectral_normalize_torch(spec)
+    # spec = spectral_normalize_torch(spec)
 
     return spec
 
@@ -233,12 +233,12 @@ def main_inp(args=None):
                 # }
                 # meta = step_fn(model_state, data_dict)
                 # dec = meta['dec']
-                dec = scripted_model(spectral_de_normalize_torch(src_mel), spectral_de_normalize_torch(tgt_mel))
+                dec = scripted_model(src_mel, tgt_mel)
                 # # y_out = my_dsp.mel2wav(dec)
                 # y_out = my_dsp.mel2wav(src_mel)
 
                 # tsrc = torch.from_numpy(src_mel[None]).float().to(device)
-                # tsrc = spectral_normalize_torch(src_mel)
+                dec = spectral_normalize_torch(dec)
                 y_out = hifigan(dec).cpu().numpy().flatten()
         
         print('shape out: ', y_out.shape)
