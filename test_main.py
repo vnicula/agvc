@@ -24,6 +24,7 @@ from agent.base import BaseAgent
 from util.config import Config
 from util.mytorch import same_seeds
 
+from hfgan.models import AttrDict, Generator
 
 attr_d = {
     "channels": 1,
@@ -58,6 +59,20 @@ tgt_mel = my_dsp.wav2mel(tgt)
 print('tgt_mel shape:', tgt_mel.shape)
 # warm up vocoder
 _ = my_dsp.mel2wav(torch.from_numpy(tgt_mel[None]).float())
+
+def load_hifigan(device):
+    with open('hfgan/config.json') as f:
+        data = f.read()
+    json_config = json.loads(data)
+    h = AttrDict(json_config)
+    generator = Generator(h).to(device)
+    state_dict_g = torch.load('hfgan/generator_v3', map_location=device)
+    generator.load_state_dict(state_dict_g['generator'])
+    generator.eval()
+    generator.remove_weight_norm()
+    return generator
+
+hifigan = load_hifigan(device)
 
 def callback(in_data, frame_count, time_info, status):
     raw_data = np.frombuffer(in_data, dtype=np.float32)
@@ -96,7 +111,9 @@ def main(args=None):
     stream = p.open(format=pyaudio.paFloat32,
                     channels=attr_d['channels'],
                     rate=attr_d["sampling_rate"],
+                    # input_device_index=1,
                     input=True,
+                    # output_device_index=4,
                     output=True,
                     frames_per_buffer=attr_d["segment_size"],
                     stream_callback=callback)
@@ -149,8 +166,11 @@ def main_inp(args=None):
                 }
                 meta = step_fn(model_state, data_dict)
                 dec = meta['dec']
-                y_out = my_dsp.mel2wav(dec)
+                # y_out = my_dsp.mel2wav(dec)
                 # y_out = my_dsp.mel2wav(src_mel)
+
+                tsrc = torch.from_numpy(src_mel[None]).float().to(device)
+                y_out = hifigan(tsrc).cpu().numpy().flatten()
         
         print('shape out: ', y_out.shape)
         # trim_value = len(y_out) - len(vad_data)
@@ -174,4 +194,4 @@ def main_inp(args=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # parser.add_argument("model_path", type=Path)
-    main(**vars(parser.parse_args()))
+    main_inp(**vars(parser.parse_args()))
