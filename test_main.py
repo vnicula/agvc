@@ -20,11 +20,69 @@ import torch
 import logging
 import util.dsp as dsp
 
+from librosa.filters import mel as librosa_mel_fn
+
 from agent.base import BaseAgent
 from util.config import Config
 from util.mytorch import same_seeds
 
 from hfgan.models import AttrDict, Generator
+
+
+def dynamic_range_compression(x, C=1, clip_val=1e-5):
+    return np.log(np.clip(x, a_min=clip_val, a_max=None) * C)
+
+
+def dynamic_range_decompression(x, C=1):
+    return np.exp(x) / C
+
+
+def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):
+    return torch.log(torch.clamp(x, min=clip_val) * C)
+
+
+def dynamic_range_decompression_torch(x, C=1):
+    return torch.exp(x) / C
+
+
+def spectral_normalize_torch(magnitudes):
+    output = dynamic_range_compression_torch(magnitudes)
+    return output
+
+
+def spectral_de_normalize_torch(magnitudes):
+    output = dynamic_range_decompression_torch(magnitudes)
+    return output
+
+
+mel_basis = {}
+hann_window = {}
+
+def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
+    if torch.min(y) < -1.:
+        print('min value is ', torch.min(y))
+    if torch.max(y) > 1.:
+        print('max value is ', torch.max(y))
+
+    global mel_basis, hann_window
+    if fmax not in mel_basis:
+        mel = librosa_mel_fn(sampling_rate, n_fft, num_mels, fmin, fmax)
+        mel_basis[str(fmax)+'_'+str(y.device)] = torch.from_numpy(mel).float().to(y.device)
+        hann_window[str(y.device)] = torch.hann_window(win_size).to(y.device)
+
+    y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
+    y = y.squeeze(1)
+
+    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[str(y.device)],
+                      center=center, pad_mode='reflect', normalized=False, onesided=True)
+
+    spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
+
+    spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
+    spec = spectral_normalize_torch(spec)
+
+    return spec
+
 
 attr_d = {
     "channels": 1,
@@ -46,25 +104,32 @@ dsp_config.feat['mel']['trim'] = 40
 my_dsp = dsp.Dsp(dsp_config.feat['mel'])
 print(my_dsp.config)
 
-# model_path = 'again-c4s_100000.pth'
-model_path = 'trained_models/steps_30000.pth'
-my_config = Config('train_again-c4s.yml')
-model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
-model_state = BaseAgent.load_model(model_state, model_path, device=device)
+# # model_path = 'again-c4s_100000.pth'
+# model_path = 'trained_models/steps_30000.pth'
+# my_config = Config('train_again-c4s.yml')
+# model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
+# model_state = BaseAgent.load_model(model_state, model_path, device=device)
+
+scripted_model = torch.jit.load('trained_models/steps_100000_cuda.pt')
 
 # tgt = my_dsp.load_wav('data/wav48/p225/p225_003.wav')
 tgt = my_dsp.load_wav('data/wav48/celebs/obama3sec.wav')
 print('target shape: ', tgt.shape)
-tgt_mel = my_dsp.wav2mel(tgt)
+vad_tgt, _ = librosa.effects.trim(tgt, top_db=my_dsp.config['trim'], ref=0.05, frame_length=128, hop_length=32)
+# tgt_mel = my_dsp.wav2mel(vad_tgt)
+tvad_tgt = torch.from_numpy(vad_tgt[None]).float().to(device)
+tgt_mel = mel_spectrogram(tvad_tgt, 1024, 80, 22050, 256, 1024, 0, 8000)
 print('tgt_mel shape:', tgt_mel.shape)
 # warm up vocoder
-_ = my_dsp.mel2wav(torch.from_numpy(tgt_mel[None]).float())
+# _ = my_dsp.mel2wav(torch.from_numpy(tgt_mel[None]).float())
+
 
 def load_hifigan(device):
     with open('hfgan/config.json') as f:
         data = f.read()
     json_config = json.loads(data)
     h = AttrDict(json_config)
+    print("HifiGAN params: ", h)
     generator = Generator(h).to(device)
     state_dict_g = torch.load('hfgan/generator_v3', map_location=device)
     generator.load_state_dict(state_dict_g['generator'])
@@ -156,21 +221,25 @@ def main_inp(args=None):
         # data = np.zeros_like(vad_data)
         if index_vad[1] - index_vad[0] >= 1024:
             # np.clip(vad_data, -1.0, 1.0)
-            src_mel = my_dsp.wav2mel(vad_data)
+            # src_mel = my_dsp.wav2mel(vad_data)
+            tvad = torch.from_numpy(vad_data[None]).float().to(device)
+            src_mel = mel_spectrogram(tvad, 1024, 80, 22050, 256, 1024, 0, 8000)
             print('Mel convert shape: ', src_mel.shape)
 
             with torch.no_grad():
-                data_dict = {
-                    'source': {'mel': src_mel},
-                    'target': {'mel': tgt_mel},
-                }
-                meta = step_fn(model_state, data_dict)
-                dec = meta['dec']
-                # y_out = my_dsp.mel2wav(dec)
+                # data_dict = {
+                #     'source': {'mel': src_mel},
+                #     'target': {'mel': tgt_mel},
+                # }
+                # meta = step_fn(model_state, data_dict)
+                # dec = meta['dec']
+                dec = scripted_model(spectral_de_normalize_torch(src_mel), spectral_de_normalize_torch(tgt_mel))
+                # # y_out = my_dsp.mel2wav(dec)
                 # y_out = my_dsp.mel2wav(src_mel)
 
-                tsrc = torch.from_numpy(src_mel[None]).float().to(device)
-                y_out = hifigan(tsrc).cpu().numpy().flatten()
+                # tsrc = torch.from_numpy(src_mel[None]).float().to(device)
+                # tsrc = spectral_normalize_torch(src_mel)
+                y_out = hifigan(dec).cpu().numpy().flatten()
         
         print('shape out: ', y_out.shape)
         # trim_value = len(y_out) - len(vad_data)
