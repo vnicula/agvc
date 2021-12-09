@@ -79,7 +79,7 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
     spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
 
     spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
-    # spec = spectral_normalize_torch(spec)
+    spec = spectral_normalize_torch(spec)
 
     return spec
 
@@ -115,14 +115,14 @@ scripted_model = torch.jit.load('trained_models/steps_100000_cuda.pt')
 # tgt = my_dsp.load_wav('data/wav48/p225/p225_003.wav')
 tgt = my_dsp.load_wav('data/wav48/celebs/obama3sec.wav')
 print('target shape: ', tgt.shape)
-vad_tgt, _ = librosa.effects.trim(tgt, top_db=my_dsp.config['trim'], ref=0.05, frame_length=128, hop_length=32)
+# vad_tgt, _ = librosa.effects.trim(tgt, top_db=my_dsp.config['trim'], ref=0.05, frame_length=128, hop_length=32)
 # tgt_mel = my_dsp.wav2mel(vad_tgt)
-tvad_tgt = torch.from_numpy(vad_tgt[None]).float().to(device)
+tvad_tgt = torch.from_numpy(tgt[None]).float().to(device)
 tgt_mel = mel_spectrogram(tvad_tgt, 1024, 80, 22050, 256, 1024, 0, 8000)
 print('tgt_mel shape:', tgt_mel.shape)
+
 # warm up vocoder
 # _ = my_dsp.mel2wav(torch.from_numpy(tgt_mel[None]).float())
-
 
 def load_hifigan(device):
     with open('hfgan/config.json') as f:
@@ -138,6 +138,8 @@ def load_hifigan(device):
     return generator
 
 hifigan = load_hifigan(device)
+# warm up vocoder
+_ = hifigan(tgt_mel)
 
 def callback(in_data, frame_count, time_info, status):
     raw_data = np.frombuffer(in_data, dtype=np.float32)
@@ -235,13 +237,14 @@ def main_inp(args=None):
                 # dec = meta['dec']
                 dec = scripted_model(src_mel, tgt_mel)
                 # # y_out = my_dsp.mel2wav(dec)
-                # y_out = my_dsp.mel2wav(src_mel)
+                y_out = my_dsp.mel2wav(src_mel)
 
                 # tsrc = torch.from_numpy(src_mel[None]).float().to(device)
-                dec = spectral_normalize_torch(dec)
-                y_out = hifigan(dec).cpu().numpy().flatten()
+                # dec = spectral_normalize_torch(dec)
+                # y_out = hifigan(dec).cpu().numpy().flatten()
         
         print('shape out: ', y_out.shape)
+        print('vad in: ', vad_data.shape)
         # trim_value = len(y_out) - len(vad_data)
         # y_out = y_out[trim_value // 2: len(y_out) - (trim_value // 2 + trim_value % 2)]
         reco = np.concatenate([lead_silence, y_out[:len(vad_data)], trail_silence], axis=0)
