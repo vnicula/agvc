@@ -105,24 +105,26 @@ my_dsp = dsp.Dsp(dsp_config.feat['mel'])
 print(my_dsp.config)
 
 # # model_path = 'again-c4s_100000.pth'
-# model_path = 'trained_models/steps_30000.pth'
-# my_config = Config('train_again-c4s.yml')
-# model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
-# model_state = BaseAgent.load_model(model_state, model_path, device=device)
+model_path = 'trained_models/steps_30000.pth'
+my_config = Config('train_again-c4s.yml')
+model_state, step_fn = BaseAgent.build_model(my_config.build, mode='inference', device=device)
+model_state = BaseAgent.load_model(model_state, model_path, device=device)
+vcmodel = model_state['model']
 
-scripted_model = torch.jit.load('trained_models/steps_100000_cuda.pt')
+# scripted_model = torch.jit.load('trained_models/steps_100000_cuda.pt', map_location='cuda:0')
 
 # tgt = my_dsp.load_wav('data/wav48/p225/p225_003.wav')
 tgt = my_dsp.load_wav('data/wav48/celebs/obama3sec.wav')
 print('target shape: ', tgt.shape)
-# vad_tgt, _ = librosa.effects.trim(tgt, top_db=my_dsp.config['trim'], ref=0.05, frame_length=128, hop_length=32)
-# tgt_mel = my_dsp.wav2mel(vad_tgt)
-tvad_tgt = torch.from_numpy(tgt[None]).float().to(device)
-tgt_mel = mel_spectrogram(tvad_tgt, 1024, 80, 22050, 256, 1024, 0, 8000)
+vad_tgt, _ = librosa.effects.trim(tgt, top_db=my_dsp.config['trim'], ref=0.05, frame_length=128, hop_length=32)
+tgt_mel = my_dsp.wav2mel(vad_tgt)
+# tvad_tgt = torch.from_numpy(tgt[None]).float().to(device)
+# tgt_mel = mel_spectrogram(tvad_tgt, 1024, 80, 22050, 256, 1024, 0, 8000)
 print('tgt_mel shape:', tgt_mel.shape)
 
 # warm up vocoder
 # _ = my_dsp.mel2wav(torch.from_numpy(tgt_mel[None]).float())
+_ = my_dsp.mel2wav(tgt_mel)
 
 def load_hifigan(device):
     with open('hfgan/config.json') as f:
@@ -137,9 +139,9 @@ def load_hifigan(device):
     generator.remove_weight_norm()
     return generator
 
-hifigan = load_hifigan(device)
-# warm up vocoder
-_ = hifigan(tgt_mel)
+# load and warm up vocoder
+# hifigan = load_hifigan(device)
+# _ = hifigan(torch.from_numpy(tgt_mel[None]).float().to(device))
 
 def callback(in_data, frame_count, time_info, status):
     raw_data = np.frombuffer(in_data, dtype=np.float32)
@@ -223,25 +225,27 @@ def main_inp(args=None):
         # data = np.zeros_like(vad_data)
         if index_vad[1] - index_vad[0] >= 1024:
             # np.clip(vad_data, -1.0, 1.0)
-            # src_mel = my_dsp.wav2mel(vad_data)
-            tvad = torch.from_numpy(vad_data[None]).float().to(device)
-            src_mel = mel_spectrogram(tvad, 1024, 80, 22050, 256, 1024, 0, 8000)
+            src_mel = my_dsp.wav2mel(vad_data)
+            # tvad = torch.from_numpy(vad_data[None]).float().to(device)
+            # src_mel = mel_spectrogram(tvad, 1024, 80, 22050, 256, 1024, 0, 8000)
             print('Mel convert shape: ', src_mel.shape)
 
             with torch.no_grad():
-                # data_dict = {
-                #     'source': {'mel': src_mel},
-                #     'target': {'mel': tgt_mel},
-                # }
-                # meta = step_fn(model_state, data_dict)
-                # dec = meta['dec']
-                dec = scripted_model(src_mel, tgt_mel)
+                data_dict = {
+                    'source': {'mel': src_mel},
+                    'target': {'mel': tgt_mel},
+                }
+                meta = step_fn(model_state, data_dict)
+                dec = meta['dec']
+                # dec = vcmodel.inference(src_mel, tgt_mel)
+                # dec = scripted_model(src_mel, tgt_mel)
+                # print('dec shape: ', dec.shape)
                 # # y_out = my_dsp.mel2wav(dec)
-                y_out = my_dsp.mel2wav(src_mel)
+                y_out = my_dsp.mel2wav(dec)
 
                 # tsrc = torch.from_numpy(src_mel[None]).float().to(device)
                 # dec = spectral_normalize_torch(dec)
-                # y_out = hifigan(dec).cpu().numpy().flatten()
+                # y_out = hifigan(dec * 2.303).cpu().numpy().flatten()
         
         print('shape out: ', y_out.shape)
         print('vad in: ', vad_data.shape)
